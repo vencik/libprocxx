@@ -1,0 +1,50 @@
+General process framework for C++
+=================================
+
+
+Disclaimer
+----------
+
+*This is work in progress.*
+
+
+List of functionality
+---------------------
+
+*TODO*
+
+
+Build and installation
+----------------------
+
+You need C\++ compiler with support for C++11.
+Recent enough gcc (4.9) or newer is OK.
+You also need cmake and make.
+
+On Debian-based systems, the following should get the above:
+----
+# apt-get install g++ cmake make git
+----
+
+Clone the project:
+----
+$ git clone https://github.com/vencik/libprocxx.git
+----
+
+Build the project:
+----
+$ cd libprocxx
+$ ./build.sh
+----
+
+
+License
+-------
+
+The software is available open-source under the terms of 3-clause BSD license.
+
+
+Author
+------
+
+Václav Krpec  <vencik@razdva.cz>

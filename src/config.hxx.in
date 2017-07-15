@@ -1,0 +1,8 @@
+#ifndef libprocxx__config_hxx
+#define libprocxx__config_hxx
+
+#define LIBPROCXX_VERSION_MAJOR @LIBPROCXX_VERSION_MAJOR@
+#define LIBPROCXX_VERSION_MINOR @LIBPROCXX_VERSION_MINOR@
+#define LIBPROCXX_VERSION_PATCH @LIBPROCXX_VERSION_PATCH@
+
+#endif  // end of #ifndef libprocxx__config_hxx

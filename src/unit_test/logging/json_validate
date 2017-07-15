@@ -1,0 +1,11 @@
+#!/bin/sh
+
+ut_cmd="$1"
+if which python >/dev/null; then
+    echo "Checking JSON format using $0.py"
+    ut_cmd="${ut_cmd} | $0.py"
+else
+    echo "JSON format checking not possible"
+fi
+
+eval "${ut_cmd}"
