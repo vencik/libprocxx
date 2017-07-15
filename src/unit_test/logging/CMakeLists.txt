@@ -11,3 +11,8 @@ add_test(
     NAME    libprocxx::logging::json
     COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/json_validate"
         "./unit_test__libprocxx__logging__json")
+
+add_executable(unit_test__libprocxx__logging__aio aio.cxx)
+target_link_libraries(unit_test__libprocxx__logging__aio
+    LINK_PUBLIC libprocxx__logging)
+add_test(libprocxx::logging::aio unit_test__libprocxx__logging__aio)

@@ -57,7 +57,7 @@ namespace container {
  *  The container provides 1st available slot from a vector of N slots.
  *  The time complexity of acquire/release operations is O(log N).
  *
- *  \tparam  Slot  Slot type, must have default constructor
+ *  \tparam  Slot  Slot type
  */
 template <typename Slot>
 class slots {
@@ -75,10 +75,19 @@ class slots {
         return &slot - m_slots.data();
     }
 
+    /** Slot index queue initialisation */
+    void init_slot_ix_queue(size_t n) {
+        m_slot_ixs.reserve(n);
+
+        // All the slots are available
+        for (size_t i = 0; i < n; ++i)
+            m_slot_ix_pqueue.push(i);
+    }
+
     public:
 
     /**
-     *  Constructor
+     *  \brief  Constructor
      *
      *  \param  n  Number of slots
      */
@@ -86,11 +95,23 @@ class slots {
         m_slots(n),
         m_slot_ix_pqueue(std::greater<size_t>(), m_slot_ixs)
     {
-        m_slot_ixs.reserve(n);
+        init_slot_ix_queue(n);
+    }
 
-        // All the slots are available
-        for (size_t i = 0; i < m_slots.size(); ++i)
-            m_slot_ix_pqueue.push(i);
+    /**
+     *  \brief  Constructor
+     *
+     *  \param  n     Number of slots
+     *  \param  args  Slot constructor parameters
+     */
+    template <typename... Args>
+    slots(size_t n, Args... args):
+        m_slot_ix_pqueue(std::greater<size_t>(), m_slot_ixs)
+    {
+        m_slots.reserve(n);
+        for (size_t i = 0; i < n; ++i)
+            m_slots.emplace_back(args...);
+        init_slot_ix_queue(n);
     }
 
     /** Total number of slots */

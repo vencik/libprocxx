@@ -40,7 +40,6 @@
 
 #include <libprocxx/logging/logger.hxx>
 #include <libprocxx/logging/plain_formatter.hxx>
-#include <libprocxx/logging/json_formatter.hxx>
 #include <libprocxx/logging/ostream_processor.hxx>
 
 #include <iostream>

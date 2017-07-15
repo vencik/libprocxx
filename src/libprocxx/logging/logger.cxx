@@ -94,40 +94,44 @@ void worker::enqueue_message(message_ptr msg) {
 
 
 void worker::routine(worker & self) {
-    std::unique_lock<std::mutex> messages_lock(self.m_messages_mx);
+    {
+        std::unique_lock<std::mutex> messages_lock(self.m_messages_mx);
 
-    for (;;) {
-        bool shutdown = false;
+        for (;;) {
+            bool shutdown = false;
 
-        // Read messages
-        while (!self.m_messages.empty()) {
-            auto msg_ptr = std::move(self.m_messages.front().msg_ptr);
-            self.m_messages.pop();
+            // Read messages
+            while (!self.m_messages.empty()) {
+                auto msg_ptr = std::move(self.m_messages.front().msg_ptr);
+                self.m_messages.pop();
 
-            unlock4scope(messages_lock);
+                unlock4scope(messages_lock);
 
-            auto msg = msg_ptr.get();
+                auto msg = msg_ptr.get();
 
-            // Shutdown indication; read-out everything and then finish
-            if (nullptr == msg) {
-                shutdown = true;
-                continue;
+                // Shutdown indication; read-out everything and then finish
+                if (nullptr == msg) {
+                    shutdown = true;
+                    continue;
+                }
+
+                // Format & Process message
+                std::ostream & ostream = self.m_processor.get_stream();
+                self.m_formatter.format(*msg, ostream);
+                self.m_processor.process();
             }
 
-            // Format & Process message
-            std::ostream & ostream = self.m_processor.get_stream();
-            self.m_formatter.format(*msg, ostream);
-            self.m_processor.process();
+            if (shutdown) break;  // might happen during message processing
+
+            self.m_messages_ready.wait(messages_lock);
         }
 
-        if (shutdown) break;  // might happen during message processing
+        assert(self.m_messages.empty());
 
-        self.m_messages_ready.wait(messages_lock);
+        self.m_shutdown = true;  // no more messages may be processed
     }
 
-    assert(self.m_messages.empty());
-
-    self.m_shutdown = true;  // no more messages may be processed
+    self.m_processor.flush();  // flush pending data
 }
 
 

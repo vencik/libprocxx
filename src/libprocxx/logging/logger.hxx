@@ -416,6 +416,9 @@ class processor {
      */
     virtual void process() = 0;
 
+    /** Flush all unwritten data */
+    virtual void flush() = 0;
+
 };  // end of class processor
 
 }}  // end of namespaces logging libprocxx

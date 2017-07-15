@@ -1,9 +1,6 @@
-#ifndef libprocxx__logging__ostream_processor_hxx
-#define libprocxx__logging__ostream_processor_hxx
-
 /**
  *  \file
- *  \brief  Simple \c std::ostream based log message processor
+ *  \brief  Logging unit test: plain log line, AIO
  *
  *  \date   2017/07/15
  *  \author Vaclav Krpec  <vencik@razdva.cz>
@@ -42,35 +39,52 @@
  */
 
 #include <libprocxx/logging/logger.hxx>
+#include <libprocxx/logging/plain_formatter.hxx>
+#include <libprocxx/logging/file_processor.hxx>
 
-#include <ostream>
+#include <iostream>
 
 
-namespace libprocxx {
-namespace logging {
+static int main_impl(int argc, char * const argv[]) {
+    libprocxx::logging::plain_formatter logging_formatter;
+    libprocxx::logging::file_processor logging_processor("./logfile");
+    libprocxx::logging::worker logging_worker(
+        logging_formatter, logging_processor);
 
-/** Simple processor providing \c std::ostream instance */
-class ostream_processor: public processor {
-    private:
+    libprocxx::logging::logger logger = logging_worker.get_logger(
+        "TestLogger", libprocxx::logging::log_level::DEBUG);
+    #define LIBPROCXX__LOGGING__LOGGER logger
 
-    std::ostream & m_ostream;  /**< Log message stream */
+    info("Created");
 
-    public:
+    debug("Something"
+        << 123 << " happened "
+        << 15000000.1234
+        << 'K' << "   " << &logger);
 
-    /** Constructor */
-    ostream_processor(std::ostream & ostream): m_ostream(ostream) {}
+    info("Finished");
 
-    /** Log stream provider */
-    std::ostream & get_stream() { return m_ostream; }
+    return 0;
+}
 
-    /** Process stream (no need to do anything) */
-    void process() {}
+int main(int argc, char * const argv[]) {
+    int exit_code = 128;
 
-    /** Flush (no need to do anything) */
-    void flush() {}
+    try {
+        exit_code = main_impl(argc, argv);
+    }
+    catch (const std::exception & x) {
+        std::cerr
+            << "Standard exception caught: "
+            << x.what()
+            << std::endl;
+    }
+    catch (...) {
+        std::cerr
+            << "Unhandled non-standard exception caught"
+            << std::endl;
+    }
 
-};  // end of class ostream_processor
-
-}}  // end of namespaces logging libprocxx
-
-#endif  // end of #ifndef libprocxx__logging__ostream_processor_hxx
+    std::cerr << "Exit code: " << exit_code << std::endl;
+    return exit_code;
+}

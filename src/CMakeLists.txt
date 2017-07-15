@@ -14,7 +14,7 @@ configure_file(
 
 # C++ flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
-    -g -Wall -Werror --std=c++11 -O2 -pthread")
+    -g -Wall -Werror --std=c++11 -O2 -pthread -lrt")
 
 # Strip source directory prefix from file names
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
