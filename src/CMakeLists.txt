@@ -9,8 +9,8 @@ set(LIBPROCXX_VERSION_PATCH 0)
 
 # Config. header file
 configure_file(
-    "${PROJECT_SOURCE_DIR}/config.hxx.in"
-    "${PROJECT_BINARY_DIR}/config.hxx")
+    "${PROJECT_SOURCE_DIR}/libprocxx/config.hxx.in"
+    "${PROJECT_BINARY_DIR}/libprocxx/config.hxx")
 
 # C++ flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
@@ -29,3 +29,4 @@ include_directories("${PROJECT_BINARY_DIR}")
 # Subdirectories
 add_subdirectory(libprocxx)
 add_subdirectory(unit_test)
+add_subdirectory(benchmark)
