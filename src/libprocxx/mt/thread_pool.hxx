@@ -118,7 +118,7 @@ class thread_pool_base {
         attributes m_attrs;  /**< Job queue statistics attributes */
 
         /** See \ref update */
-        size_t update_impl(size_t size) {
+        ssize_t update_impl(size_t size) {
             ssize_t diff  = size - m_attrs.size;
             ssize_t diff2 = diff - m_attrs.diff;
 
@@ -127,6 +127,9 @@ class thread_pool_base {
 
             // Queue size is over high watermark
             if (size > m_attrs.size_high_wm) return 5;
+
+            // Queue is shrinking and it seems to be a trend
+            if (diff < 0 && diff2 <= 0) return -1;
 
             // Queue is short and doesn't grow much
             if (size < m_attrs.sampling_freq &&
@@ -164,14 +167,14 @@ class thread_pool_base {
          *  \brief  Update statistics
          *
          *  Updates the queue usage statistics and computes how many
-         *  new treads should be created in order to manage the queue
+         *  new treads should be created/terminated in order to manage the queue
          *  size trend.
          *
          *  \param  size  Current queue size
          *
-         *  \return Number of threads to be created
+         *  \return Suggested thread count difference
          */
-        inline size_t update(size_t size) {
+        inline ssize_t update(size_t size) {
             if (--m_attrs.sampling_cnt) return 0;
 
             m_attrs.sampling_cnt = m_attrs.sampling_freq;
@@ -185,11 +188,12 @@ class thread_pool_base {
 
     /** Job queue wrapper for MT */
     struct job_queue_mt {
-        job_queue_t             q;       /**< Queue implementation   */
-        bool                    closed;  /**< Queue was closed       */
-        mutable std::mutex      mx;      /**< Operation mutex        */
-        std::condition_variable cv;      /**< Status change signal   */
-        queue_stats             stats;   /**< Queue usage statistics */
+        job_queue_t             q;           /**< Queue implementation   */
+        bool                    closed;      /**< Queue was closed       */
+        mutable std::mutex      mx;          /**< Operation mutex        */
+        std::condition_variable cv_consume;  /**< Job(s) in queue signal */
+        std::condition_variable cv_produce;  /**< Push more jobs signal  */
+        queue_stats             stats;       /**< Queue usage statistics */
 
         /** Constructor */
         job_queue_mt(size_t high_wm, size_t sampling_freq):
@@ -203,7 +207,6 @@ class thread_pool_base {
         /** Push a \c job to queue */
         inline void push(job_t && job, size_t priority = 1) {
             q.emplace(std::move(job));
-            cv.notify_one();
         }
 
         /** Pop a job from queue */
@@ -359,85 +362,111 @@ class thread_pool_base {
     private:
 
     /**
-     *  \brief  Pooled thread routine
+     *  \brief  Job queue processing routine
+     *
+     *  The function implements the job queue processing by a pooled thread.
+     *  It returns when the thread decides that it should terminate (either
+     *  because thread pool shutdown was signalised or because threads count
+     *  is unnecessarily high).
+     *
+     *  \return \c true iff shutdown was signalised
+     */
+    bool process_queue() {
+        std::cv_status cv_status;
+
+        std::unique_lock<std::mutex> lock(m_job_queue.mx);
+        do {
+            size_t job_queue_size;
+            while ((job_queue_size = m_job_queue.size())) {
+                // Update job queue statistics and schedule thread creation
+                ssize_t tcnt_diff = m_job_queue.stats.update(
+                    job_queue_size);
+
+                // Start more threads or stop if there are too many
+                if (tcnt_diff) {
+                    // Delegate the job
+                    m_job_queue.cv_consume.notify_one();
+
+                    if (tcnt_diff < 0) return false;  // resign preemptively
+
+                    // Start more threads
+                    unlock4scope(lock);
+
+                    // Honour the thread count limit though
+                    {
+                        std::unique_lock<std::mutex> lock(m_mx);
+
+                        if (m_attrs.tmax < m_attrs.tcnt + tcnt_diff)
+                            tcnt_diff = m_attrs.tmax - m_attrs.tcnt;
+
+                        m_attrs.tcnt += tcnt_diff;  // pre-increase thread count
+                    }
+
+                    size_t failed = tcnt_diff - start_threads(tcnt_diff);
+
+                    if (failed) {
+                        std::unique_lock<std::mutex> lock(m_mx);
+
+                        m_attrs.tcnt -= failed;  // fix thread count
+                    }
+
+                    continue;
+                }
+
+                // Pop job from queue
+                job_t job(m_job_queue.pop());
+
+                // Signalise to a job producer
+                const size_t job_queue_size_hwm =
+                    m_job_queue.stats.attrs().size_high_wm;
+                if (job_queue_size <= job_queue_size_hwm)  // one already popped
+                    m_job_queue.cv_produce.notify_one();
+
+                // Execute job
+                unlock4scope(lock);
+                job();
+            }
+
+            if (m_job_queue.closed) return true;  // shutdown
+
+            cv_status = m_job_queue.cv_consume.wait_for(
+                lock, m_attrs.idle_tout);
+
+        } while (std::cv_status::no_timeout == cv_status);
+
+        return false;  // idle for too long
+    }
+
+    /**
+     *  \brief  Pooled thread main routine
+     *
+     *  The thread routine runs the job queue processing routine and deals with
+     *  it's return status.
+     *  Should the thread be kept running, the job queue processing routine
+     *  is restarted; otherwise, the thread terminates.
      *
      *  \param  tpool  Thread pool
      */
     static void routine(thread_pool_base & tpool) {
-        // Thread routine main loop
         for (;;) {
-            bool shutdown = false;
-
-            // Process job queue
-            {
-                std::cv_status cv_status;
-
-                std::unique_lock<std::mutex> lock(tpool.m_job_queue.mx);
-                do {
-                    size_t job_queue_size;
-                    while ((job_queue_size = tpool.m_job_queue.size())) {
-                        // Update job queue statistics and schedule thread creation
-                        size_t tcnt = tpool.m_job_queue.stats.update(
-                            job_queue_size);
-
-                        // Start more threads
-                        if (tcnt) {
-                            tpool.m_job_queue.cv.notify_one();  // delegate the job
-
-                            unlock4scope(lock);
-
-                            // Honour the thread limit though
-                            {
-                                std::unique_lock<std::mutex> lock(tpool.m_mx);
-
-                                if (tpool.m_attrs.tmax < tpool.m_attrs.tcnt + tcnt)
-                                    tcnt = tpool.m_attrs.tmax - tpool.m_attrs.tcnt;
-
-                                tpool.m_attrs.tcnt += tcnt;  // pre-increase thread count
-                            }
-
-                            size_t failed = tcnt - tpool.start_threads(tcnt);
-
-                            if (failed) {
-                                std::unique_lock<std::mutex> lock(tpool.m_mx);
-
-                                tpool.m_attrs.tcnt -= failed;
-                            }
-
-                            continue;
-                        }
-
-                        // Execute job
-                        job_t job(tpool.m_job_queue.pop());
-
-                        unlock4scope(lock);
-                        job();
-                    }
-
-                    // Shutting down
-                    if ((shutdown = tpool.m_job_queue.closed)) break;
-
-                    cv_status = tpool.m_job_queue.cv.wait_for(
-                        lock, tpool.m_attrs.idle_tout);
-
-                } while (std::cv_status::no_timeout == cv_status);
-            }
+            bool shutdown = tpool.process_queue();
 
             // Thread termination (?)
             {
                 std::unique_lock<std::mutex> lock(tpool.m_mx);
 
-                // Suppress thread termination if it's reserved
-                if (!shutdown && tpool.m_attrs.tcnt <= tpool.m_attrs.treserved) continue;
+                // Thread is reserved, no shutdown
+                if (!shutdown && tpool.m_attrs.tcnt <= tpool.m_attrs.treserved)
+                    continue;  // re-start queue processing
 
                 // Last thread stops
                 if (0 == --tpool.m_attrs.tcnt) {
                     tpool.m_attrs.terminated = true;
                     tpool.m_cv.notify_one();
                 }
-
-                break;  // abandon the thread routine loop
             }
+
+            break;  // thread routine terminates
         }
     }
 
@@ -514,7 +543,8 @@ class thread_pool_base {
      *  \brief  Unreserve \c n threads
      *
      *  The threads will not immediately end, but they will, as soon as they
-     *  become idle for long enough.
+     *  become idle for long enough or it's decided that they are no longer
+     *  required.
      */
     void unreserve(size_t n) {
         std::unique_lock<std::mutex> lock(m_mx);
@@ -522,9 +552,66 @@ class thread_pool_base {
         m_attrs.treserved -= n;
     }
 
-    /** Schedule a job */
-    void schedule(job_t && job) {
+    /**
+     *  \brief  Schedule a job
+     *
+     *  Job is normally scheduled only if the job queue size is below the high
+     *  watermark.
+     *  If job queue size high watermark is reached then, unless the \c force
+     *  flag is set, the function call shall be suspended for \c tout us.
+     *  0 means no blocking, negative value (the default) means no time limit.
+     *
+     *  This mechanism allows for propagation of the situation when the job
+     *  processing back-end threads are overwhelmed with jobs.
+     *  In such a situation, the job producer(s) may be slowed down (willingly
+     *  or by blocking) unless they choose to force jobs scheduling.
+     *
+     *  Note that the function will throw an exception if the job queue
+     *  was already closed.
+     *  Otherwise, if in \c force mode or negative \c tout is set,
+     *  the function guarantees that te job will be scheduled
+     *  (i.e. the function will return \c true ).
+     *
+     *  Also note that, unless \c force mode is used, the function quarantees
+     *  that the job queue shall not grow over the high watermark.
+     *
+     *  \param  job    Scheduled job
+     *  \param  force  Schedule job despite the job queue high WM was reached
+     *  \param  tout   Wait timeout [us] (not meaningful if \c force is set)
+     *
+     *  \return \c true iff the job was scheduled
+     */
+    bool schedule(job_t && job, bool force = false, double tout = -1.0) {
         std::unique_lock<std::mutex> lock(m_job_queue.mx);
+
+        do {  // pragmatic do ... while (0) loop allowing for breaks
+            if (force) break;  // schedule job no matter what
+
+            const size_t q_size_hwm = m_job_queue.stats.attrs().size_high_wm;
+
+            if (m_job_queue.size() < q_size_hwm) break;         // green light
+            if (0.0 == tout)                     return false;  // don't wait
+
+            // Wait indefinitely
+            if (tout < 0) {
+                do m_job_queue.cv_produce.wait(lock);
+                while (m_job_queue.size() >= q_size_hwm);
+
+                break;  // schedule job now
+            }
+
+            // Wait for at most tout us
+            std::cv_status cv_status =
+                m_job_queue.cv_produce.wait_for(lock, timeout_t(tout));
+
+            // Timeout or queue still too long
+            if (std::cv_status::timeout == cv_status ||
+                m_job_queue.size()      >= q_size_hwm)
+            {
+                return false;
+            }
+
+        } while (0);  // end of pragmatic loop
 
         if (m_job_queue.closed)
             throw std::logic_error(
@@ -532,10 +619,19 @@ class thread_pool_base {
                 "attempt to push a job to closed job queue");
 
         m_job_queue.push(std::move(job));
+        m_job_queue.cv_consume.notify_one();
+
+        return true;  // job scheduled
     }
 
-    /** Schdule a job copy */
-    inline void schedule(const job_t & job) { schedule(job_t(job)); }
+    /** Schedule a job copy */
+    inline bool schedule(
+        const job_t & job,
+        bool          force = false,
+        double        tout  = -1.0)
+    {
+        return schedule(job_t(job), force, tout);
+    }
 
     /**
      *  \brief  Shut the pool down
@@ -546,7 +642,7 @@ class thread_pool_base {
     inline void shutdown() {
         std::unique_lock<std::mutex> lock(m_job_queue.mx);
         m_job_queue.closed = true;
-        m_job_queue.cv.notify_all();
+        m_job_queue.cv_consume.notify_all();
     }
 
     /**
