@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8)
-project("Various algorithms" CXX)
+project("libprocxx" CXX)
 enable_testing()
 
 # Version
@@ -13,8 +13,13 @@ configure_file(
     "${PROJECT_BINARY_DIR}/libprocxx/config.hxx")
 
 # C++ flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
-    -g -Wall -Werror --std=c++11 -O2 -pthread -lrt")
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARDREQUIRED ON)
+set(CMAKE_CXX_FLAGS "-Wall -Werror -O2 ${CMAKE_CXX_FLAGS} ${CXXFLAGS}")
+
+# Dependencies
+find_library(PTHREAD NAMES pthread REQUIRED)
+find_library(RT NAMES rt REQUIRED)
 
 # Strip source directory prefix from file names
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \

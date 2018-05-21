@@ -39,12 +39,13 @@
  */
 
 #include <libprocxx/mt/thread_pool.hxx>
+#include <libprocxx/mt/scheduler.hxx>
+#include <libprocxx/stats/controller.hxx>
+#include <libprocxx/stats/utils.hxx>
 
 #include <iostream>
 #include <functional>
 #include <chrono>
-#include <mutex>
-#include <sstream>
 
 
 using my_tpool_copy_t = libprocxx::mt::thread_pool_fifo<
@@ -66,46 +67,30 @@ class test {
     private:
 
     /** Report thread pool info */
-    static std::ostream & report(
-        std::ostream & out,
-        const TP     & tpool)
+    static void report(
+        std::ostream            & out,
+        const typename TP::info & info)
     {
-        static std::mutex out_mx;
-
-        const auto info(tpool.get_info());
-
         double now =
             (double)(std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count())
             / 1000000.0;
 
-        std::stringstream info_ss; info_ss
-            << "{\"timestamp\":"  << std::showpoint << std::fixed << now
-            << ",\"tmax\":"       << info.attrs.tmax
-            << ",\"tcnt\":"       << info.attrs.tcnt
-            << ",\"treserved\":"  << info.attrs.treserved
-            << ",\"idle_tout\":"  << std::showpoint << std::fixed << info.attrs.idle_tout.count()
-            << ",\"terminated\":" << std::boolalpha << info.attrs.terminated
-            << ",\"job_queue\":"
-                   "{\"size\":"         << info.job_queue.size
-                << ",\"closed\":"       << info.job_queue.closed
-                << ",\"statistics\":"
-                       "{\"size_high_wm\":"  << info.job_queue.stats.size_high_wm
-                    << ",\"sampling_freq\":" << info.job_queue.stats.sampling_freq
-                    << ",\"sampling_cnt\":"  << info.job_queue.stats.sampling_cnt
-                    << ",\"size\":"          << info.job_queue.stats.size
-                    << ",\"diff\":"          << info.job_queue.stats.diff
-                    << "}"
-                "}"
-            "}";
-
-        // Lock the output so as the JSON objects stay consistent
-        std::unique_lock<std::mutex> lock(out_mx);
-
-        // TODO: Buffered shoveling of data from info_ss to out
-        out << info_ss.str() << std::endl;
-
-        return out;
+        out
+            << "{\"timestamp\":"   << std::showpoint << std::fixed << now
+            << ",\"tmax\":"        << info.attrs.tmax
+            << ",\"tcnt\":"        << info.attrs.tcnt
+            << ",\"treserved\":"   << info.attrs.treserved
+            << ",\"keepalive4\":"  << info.attrs.keepalive4
+            << ",\"idle_tout\":"   << std::showpoint << std::fixed << info.attrs.idle_tout.count()
+            << ",\"terminated\":"  << std::boolalpha << info.attrs.terminated
+            << ",\"queue\":"
+                   "{\"high_wm\":" << info.queue.high_wm
+                << ",\"size\":"    << info.queue.size
+                << ",\"closed\":"  << info.queue.closed
+                << "}"
+            "}"
+            << std::endl;
     }
 
     public:
@@ -113,54 +98,79 @@ class test {
     /**
      *  \brief  Thread pool UT
      *
-     *  The arguments are passed to thread pool constructor
+     *  \param  n     Number of test loops
+     *  \param  args  Arguments passed to thread pool constructor
      */
     template <typename... Args>
-    test(Args... args) {
-        const size_t n   = 100;
-        const double ms1 = 100;
-        const double ms2 =  80;
-        const double ms3 =  90;
+    test(size_t n, Args... args) {
+        const double msc =  50;
+        const double ms1 = 190;
+        const double ms2 = 100;
+        const double ms3 =  20;
 
-        std::function<void()> job1, job2, job3;
+        std::function<void()> controller, job1, job2, job3;
 
+        libprocxx::stats::pid_controller<double> pid_ctrl(
+            20, 0.0, 2, 0, 3, msc / 1000.0);
+        libprocxx::stats::moving_average<double> correction_avg(10);
+
+        // Create thread pool
         TP tpool(args...);
 
-        job1 = [ms1, &tpool]() {
-            report(std::cout, tpool);
+        // Create scheduler
+        using scheduler_task_t = typename TP::job_t;
+        using scheduler_t      = libprocxx::mt::scheduler<scheduler_task_t, TP>;
+        scheduler_t scheduler(tpool);
 
-            sleep_ms(ms1);
+        // Create thread pool controller
+        controller = [&tpool, &scheduler, &pid_ctrl, &correction_avg]() {
+            auto info = tpool.get_info();
 
-            report(std::cout, tpool);
+            // Calculate thread count correction using PID controller
+            double fill_rate = (double)info.queue.size / info.queue.high_wm;
+            double corr      = pid_ctrl(fill_rate);
+            double corr_avg  = correction_avg << corr;
+
+std::cerr
+    << "Fill rate: " << fill_rate << std::endl
+    << "Correction: " << corr << std::endl
+    << "Correction avg: " << corr_avg << std::endl;
+
+            size_t start = corr_avg <= -0.5 ? (size_t)-corr_avg : 0;
+
+            //report(std::cout, info, fill_rate, corr, corr_avg, start);
+            report(std::cout, info);
+
+            // The pool has shut down and scheduler uses the last thread
+            if (info.queue.closed && info.attrs.tcnt == 1) {
+                scheduler.shutdown(scheduler_t::runtime_level::SHUTDOWN_ASAP);
+                return;
+            }
+
+            // Start more threads
+            if (start) tpool.start(start);
         };
 
-        job2 = [ms2, &tpool]() {
-            report(std::cout, tpool);
+        // Schedule thread pool controller
+        scheduler.schedule(controller, scheduler_t::asap, msc * 1000);
 
-            sleep_ms(ms2);
-
-            report(std::cout, tpool);
-        };
-
-        job3 = [ms3, &tpool]() {
-            report(std::cout, tpool);
-
-            sleep_ms(ms3);
-
-            report(std::cout, tpool);
-        };
+        // Start some jobs
+        job1 = [ms1]() { sleep_ms(ms1); };
+        job2 = [ms2]() { sleep_ms(ms2); };
+        job3 = [ms3]() { sleep_ms(ms3); };
 
         for (size_t i = 0; i < n; ++i) {
-            report(std::cout, tpool);
+            tpool.push(job1);
+            sleep_ms(3);
 
-            tpool.schedule(job1);
-            tpool.schedule(job2);
-            tpool.schedule(job3);
+            tpool.push(job2);
+            sleep_ms(5);
 
-            sleep_ms(7);
-
-            report(std::cout, tpool);
+            tpool.push(job3);
+            sleep_ms(10);
         }
+
+        tpool.shutdown();
     }
 
 };  // end of template class test
@@ -171,18 +181,21 @@ static int main_impl(int argc, char * const argv[]) {
     //std::srand(rng_seed);
     //std::cerr << "RNG seeded by " << rng_seed << std::endl;
 
-    size_t high_wm   = 20;  // job queue high watermark
-    size_t smpl_freq =  6;  // job queue statistics sampling frequency
-    size_t max       = 30;  // thread limit
-    size_t reserved  =  5;  // number of reserved threads
+    size_t loops      = 100;  // test loops
+    size_t high_wm    =  50;  // job queue high watermark
+    size_t max        =  30;  // thread limit
+    size_t reserved   =   5;  // number of reserved threads
+    size_t keepalive4 =   2;  // keep thread alive if 2+ jobs were popped
 
-    if (argc > 1) high_wm   = (size_t)std::atol(argv[1]);
-    if (argc > 2) smpl_freq = (size_t)std::atol(argv[2]);
-    if (argc > 3) max       = (size_t)std::atol(argv[3]);
-    if (argc > 4) reserved  = (size_t)std::atol(argv[4]);
+    int i = 0;
+    if (++i < argc) loops       = (size_t)std::atol(argv[i]);
+    if (++i < argc) high_wm     = (size_t)std::atol(argv[i]);
+    if (++i < argc) max         = (size_t)std::atol(argv[i]);
+    if (++i < argc) reserved    = (size_t)std::atol(argv[i]);
+    if (++i < argc) keepalive4  = (size_t)std::atol(argv[i]);
 
-    test<my_tpool_copy_t>(high_wm, smpl_freq, max, reserved);
-    test<my_tpool_ref_t> (high_wm, smpl_freq, max, reserved);
+    test<my_tpool_copy_t>(loops, high_wm, max, reserved, keepalive4);
+    test<my_tpool_ref_t> (loops, high_wm, max, reserved, keepalive4);
 
     return 0;
 }

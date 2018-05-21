@@ -79,7 +79,7 @@ logger worker::get_logger(const std::string & name, log_level::no level) {
 
 
 void worker::enqueue_message(message_ptr msg) {
-    std::unique_lock<std::mutex> messages_lock(m_messages_mx);
+    lock4scope(m_messages_mx);
 
     // Already shut down; invalid tread joining order
     if (m_shutdown)
@@ -95,7 +95,7 @@ void worker::enqueue_message(message_ptr msg) {
 
 void worker::routine(worker & self) {
     {
-        std::unique_lock<std::mutex> messages_lock(self.m_messages_mx);
+        auto lock = get_lock4scope(self.m_messages_mx);
 
         for (;;) {
             bool shutdown = false;
@@ -105,7 +105,7 @@ void worker::routine(worker & self) {
                 auto msg_ptr = std::move(self.m_messages.front().msg_ptr);
                 self.m_messages.pop();
 
-                unlock4scope(messages_lock);
+                unlock4scope(lock);
 
                 auto msg = msg_ptr.get();
 
@@ -123,7 +123,7 @@ void worker::routine(worker & self) {
 
             if (shutdown) break;  // might happen during message processing
 
-            self.m_messages_ready.wait(messages_lock);
+            self.m_messages_ready.wait(lock);
         }
 
         assert(self.m_messages.empty());

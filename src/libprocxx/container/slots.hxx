@@ -132,6 +132,7 @@ class slots {
         return m_slots[ix];
     }
 
+    /** Release previously acquired \c slot */
     inline void release(const Slot & slot) {
         m_slot_ix_pqueue.push(slot_ix(slot));
     }

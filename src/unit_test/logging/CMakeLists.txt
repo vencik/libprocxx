@@ -1,12 +1,16 @@
 # libprocxx::logging UTs
 add_executable(unit_test__libprocxx__logging__plain plain.cxx)
 target_link_libraries(unit_test__libprocxx__logging__plain
-    LINK_PUBLIC libprocxx__logging)
+    LINK_PUBLIC libprocxx__logging
+    LINK_PUBLIC pthread
+    LINK_PUBLIC rt)
 add_test(libprocxx::logging::plain unit_test__libprocxx__logging__plain)
 
 add_executable(unit_test__libprocxx__logging__json json.cxx)
 target_link_libraries(unit_test__libprocxx__logging__json
-    LINK_PUBLIC libprocxx__logging)
+    LINK_PUBLIC libprocxx__logging
+    LINK_PUBLIC pthread
+    LINK_PUBLIC rt)
 add_test(
     NAME    libprocxx::logging::json
     COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/json_validate"
@@ -14,5 +18,7 @@ add_test(
 
 add_executable(unit_test__libprocxx__logging__aio aio.cxx)
 target_link_libraries(unit_test__libprocxx__logging__aio
-    LINK_PUBLIC libprocxx__logging)
+    LINK_PUBLIC libprocxx__logging
+    LINK_PUBLIC pthread
+    LINK_PUBLIC rt)
 add_test(libprocxx::logging::aio unit_test__libprocxx__logging__aio)

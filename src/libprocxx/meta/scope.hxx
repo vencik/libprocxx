@@ -55,10 +55,21 @@
         libprocxx::meta::pairwise((fnc), (fnd))
 
 
-/** Convenience macro for deferring call to the point of scope leaving */
+/**
+ *  \brief  Call function at the point of leaving current scope
+ *
+ *  Convenience macro for deferring call to the point of scope leaving.
+ *  The \c fn function is called using \ref deferred_action wrapper.
+ */
 #define when_leaving_scope(fn) libprocxx__meta__deferred(fn)
 
-/** Convenience macro for scope pairwise calls (short identifier) */
+/**
+ *  \brief  Call \c fnc now and \c fnd when leaving current scope
+ *
+ *  Convenience macro for scope pairwise calls (short identifier).
+ *  The \c fnc function is called immediately.
+ *  The \c fnd function is called using \ref deffered_action wrapper.
+ */
 #define pair4scope(fnc, fnd) libprocxx__meta__pairwise((fnc), (fnd))
 
 
@@ -69,7 +80,10 @@ namespace meta {
  *  \brief  Deferred action
  *
  *  The object's destructor executes the function supplied.
- *  Thus, the action is deffered to the point of leaving the scope.
+ *  Thus, the action is deferred to the point of leaving the scope.
+ *
+ *  NOTE: Everything that applies to destructor (exception-wise) naturally
+ *  applies to the function, too.
  *
  *  \tparam  Fn  Function called upon destruction
  */

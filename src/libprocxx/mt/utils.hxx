@@ -42,12 +42,94 @@
  */
 
 #include <libprocxx/meta/scope.hxx>
+#include <libprocxx/meta/macro.hxx>
 
 
-/** Convenience macro for scope unlock */
-#define unlock4scope(lock_obj) \
+/**
+ *  \brief  Convenience macro for scope lock guard
+ *
+ *  Instantiates a local variable of \c std::lock_guard<decltype(lockable)>
+ *  type passing the \c lockable object to its constructor.
+ *  As long as the variable exists, the \c lockable object is in locked state.
+ *
+ *  \param  lockable  Lockable object (e.g. \c std::mutex )
+ */
+#define lock4scope(lockable) \
+    std::lock_guard<decltype(lockable)> \
+        CONCAT(__libprocxx__mt__utils__lock4scope, __LINE__)(lockable)
+
+
+/**
+ *  \brief  Convenience macro for scope shared lock guard
+ *
+ *  Instantiates a local variable of \c std::shared_lock<decltype(lockable)>
+ *  type passing the \c lockable object to its constructor.
+ *  The \c lockable object must implement shared locking.
+ *  As long as the variable exists, the \c lockable object is in shared-locked
+ *  state.
+ *
+ *  \param  lockable  Lockable object (e.g. \c std::shared_mutex )
+ */
+#define shared_lock4scope(lockable) \
+    std::shared_lock<decltype(lockable)> \
+        CONCAT(__libprocxx__mt__utils__lock4scope, __LINE__)(lockable)
+
+
+/**
+ *  \brief  Convenience macro for scope unique lock
+ *
+ *  Instantiates and returns \c std::unique_lock<decltype(lockable)> object,
+ *  passing the \c lockable object to its constructor.
+ *  As long as the variable exists, the \c lockable object is in locked state.
+ *
+ *  Note that you MUST assign the returned object to a local variable
+ *  in order to keep \c lockable object in locked state, e.g:
+ *      auto lock = get_lock4scope(my_mutex);
+ *
+ *  \param  lockable  Lockable object (e.g. \c std::mutex )
+ *
+ *  \return \c std::unique_lock<decltype(lockable)>(lockable)
+ */
+#define get_lock4scope(lockable) \
+    std::unique_lock<decltype(lockable)>(lockable)
+
+
+/**
+ *  \brief  Convenience macro for scope shared lock
+ *
+ *  Instantiates and returns \c std::shared_lock<decltype(lockable)> object,
+ *  passing the \c lockable object to its constructor.
+ *  The \c lockable object must implement shared locking.
+ *  As long as the variable exists, the \c lockable object is in shared-locked
+ *  state.
+ *
+ *  Note that you MUST assign the returned object to a local variable
+ *  in order to keep \c lockable object in locked state, e.g:
+ *      auto lock = get_shared_lock4scope(my_mutex);
+ *
+ *  \param  lockable  Lockable object (e.g. \c std::shared_mutex )
+ *
+ *  \return \c std::shared_lock<decltype(lockable)>(lockable)
+ */
+#define get_shared_lock4scope(lockable) \
+    std::shared_lock<decltype(lockable)>(lockable)
+
+
+/**
+ *  \brief  Convenience macro for scope unlock
+ *
+ *  Unlocks the \c lockable object (typically obtained from \ref get_lock4scope)
+ *  for the rest of the scope.
+ *  When the scope is abandoned (by \c break , \c continue , \c return or
+ *  throwing an exception etc) the object gets locked again.
+ *
+ *  The \c lockable object must implement \c lock() and \c unlock() methods.
+ *
+ *  \param  lockable  Lockable object (e.g. \c std::unique_lock )
+ */
+#define unlock4scope(lockable) \
     libprocxx__meta__pairwise( \
-        [&lock_obj]() { (lock_obj).unlock(); }, \
-        [&lock_obj]() { (lock_obj).lock(); })
+        [&lockable]() { (lockable).unlock(); }, \
+        [&lockable]() { (lockable).lock(); })
 
 #endif  // end of #ifndef libprocxx__mt__utils_hxx

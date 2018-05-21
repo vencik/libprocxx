@@ -28,8 +28,8 @@ def record2tpoints(rec):
         return "blue"
 
     def jq_colour(rec):
-        if rec["job_queue"]["closed"]                 : return "black"
-        if rec["job_queue"]["statistics"]["diff"] > 0 : return "red"
+        if rec["queue"]["closed"]                 : return "black"
+        #if rec["queue"]["statistics"]["diff"] > 0 : return "red"
         return "green"
 
     return (
@@ -42,7 +42,7 @@ def record2tpoints(rec):
     }, {
         # Jobs in the queue
         "colour"    : jq_colour(rec),
-        "value"     : rec["job_queue"]["size"],
+        "value"     : rec["queue"]["size"],
     })
 
 
@@ -70,7 +70,7 @@ def main(argv):
 
         if tmax is None: tmax = rec["tmax"]
 
-        jq_closed = rec["job_queue"]["closed"]
+        jq_closed = rec["queue"]["closed"]
         if jq_closed_last != jq_closed:
             if jq_closed:
                 vlines.append(_timestamp2datetime(rec["timestamp"]))
