@@ -8,7 +8,7 @@
  *
  *  LEGAL NOTICE
  *
- *  Copyright (c) 2017, Vaclav Krpec
+ *  Copyright (c) 2018, Vaclav Krpec
  *  All rights reserved.
  *
  *  Redistribution and use in source and binary forms, with or without
@@ -57,6 +57,8 @@ extern "C" {
 using namespace libprocxx;
 using namespace std::literals::chrono_literals;
 
+using event_loop_t = io::event_loop<>;
+
 
 /**
  *  \brief  Event loop template UT function
@@ -65,7 +67,7 @@ using namespace std::literals::chrono_literals;
  */
 template <class Fn>
 int event_loop_ut(Fn fn) {
-    io::event_loop eloop(10);
+    event_loop_t eloop(10);
 
     when_leaving_scope([&eloop]() {
         eloop.shutdown_async();
@@ -94,7 +96,7 @@ int event_loop_ut(Fn fn) {
  *
  *  \return \c 0 in case of success, non-zero on failure
  */
-static int event_loop_run_one_ut(io::event_loop & eloop) {
+static int event_loop_run_one_ut(event_loop_t & eloop) {
     static const std::string msg = "Hello world!";
 
 #if (1)
@@ -141,13 +143,14 @@ static int event_loop_run_one_ut(io::event_loop & eloop) {
 
     std::cout << "Listening for connections..." << std::endl;
 
-    auto data_sock = listen_sock.accept();
+    auto sock_err = listen_sock.accept();
+    auto & sock   = std::get<0>(sock_err);
 
     std::cout << "Connection established" << std::endl;
 
-    data_sock.status(io::file_descriptor::flag::NONBLOCK);
-    eloop.add_socket(data_sock, io::event_loop::poll_event::IN,
-    [](auto & sock, int events) {
+    sock.status(io::file_descriptor::flag::NONBLOCK);
+    eloop.add_socket(sock, event_loop_t::poll_event::IN,
+    [&sock](auto handle, int events) {
         static std::string rmsg;
 
         char buffer[10];

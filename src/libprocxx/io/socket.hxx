@@ -81,7 +81,7 @@ class socket_address_unix {
 };  // end of template class socket_address_unix
 
 template <>
-class socket_address_unix<const std::string &> {
+class socket_address_unix<std::string> {
     public:
     static void init(struct sockaddr_un & addr, const std::string & path) {
         if (path.size() > sizeof(addr.sun_path) - 1)
@@ -97,7 +97,7 @@ template <>
 class socket_address_unix<const char *> {
     public:
     static void init(struct sockaddr_un & addr, const char * path) {
-        socket_address_unix<const std::string &>::init(addr, path);
+        socket_address_unix<std::string>::init(addr, path);
     }
 };  // end of template class socket_address_unix
 
@@ -121,7 +121,20 @@ class socket_address_ipv4 {
 };  // end of template class socket_address_ipv4
 
 template <>
-class socket_address_ipv4<const std::string &, uint16_t> {
+class socket_address_ipv4<uint32_t, uint16_t> {
+    public:
+    static void init(
+        struct sockaddr_in & addr,
+        uint32_t             addr_pack,
+        uint16_t             port)
+    {
+        addr.sin_addr.s_addr  = htonl(addr_pack);
+        addr.sin_port         = htons(port);
+    }
+};  // end of template class socket_address_ipv4
+
+template <>
+class socket_address_ipv4<std::string, uint16_t> {
     public:
     static void init(
         struct sockaddr_in & addr,
@@ -137,27 +150,38 @@ class socket_address_ipv4<const std::string &, uint16_t> {
                 "libprocxx::io::socket::address: "
                 "IPv4 socket address: invalid string address specification");
 
-        const int b1 = ::atoi(bref[1].str().c_str());
-        const int b2 = ::atoi(bref[2].str().c_str());
-        const int b3 = ::atoi(bref[3].str().c_str());
-        const int b4 = ::atoi(bref[4].str().c_str());
+        const int b4 = ::atoi(bref[1].str().c_str());
+        const int b3 = ::atoi(bref[2].str().c_str());
+        const int b2 = ::atoi(bref[3].str().c_str());
+        const int b1 = ::atoi(bref[4].str().c_str());
 
         assert(0 <= b1 && 0 <= b2 && 0 <= b3 && 0 <= b4);
-        if (!(256 > b1 && 256 > b2 && 256 > b3 && 256 < b4))
+        if (!(256 > b1 && 256 > b2 && 256 > b3 && 256 > b4))
             throw std::runtime_error(
                 "libprocxx::io::socket::address: "
                 "IPv4 socket address: invalid address");
 
-        addr.sin_addr.s_addr  = 0;
-        addr.sin_addr.s_addr |= static_cast<uint32_t>(b1) <<  0;
-        addr.sin_addr.s_addr |= static_cast<uint32_t>(b2) <<  8;
-        addr.sin_addr.s_addr |= static_cast<uint32_t>(b3) << 16;
-        addr.sin_addr.s_addr |= static_cast<uint32_t>(b4) << 24;
+        const uint32_t addr_pack =
+            (static_cast<uint32_t>(b1) <<  0) |
+            (static_cast<uint32_t>(b2) <<  8) |
+            (static_cast<uint32_t>(b3) << 16) |
+            (static_cast<uint32_t>(b4) << 24);
 
-        addr.sin_port = htons(port);
+        socket_address_ipv4<uint32_t, uint16_t>::init(addr, addr_pack, port);
     }
 };  // end of template class socket_address_ipv4
 
+template <>
+class socket_address_ipv4<const char *, uint16_t> {
+    public:
+    static void init(
+        struct sockaddr_in & addr,
+        const char *         addr_str,
+        uint16_t             port)
+    {
+        socket_address_ipv4<std::string, uint16_t>::init(addr, addr_str, port);
+    }
+};  // end of template class socket_address_ipv4
 
 template <typename... Args>
 class socket_address_ipv6 {
@@ -170,12 +194,12 @@ class socket_address_ipv6 {
 };  // end of template class socket_address_ipv6
 
 template <>
-class socket_address_ipv6<const std::string &, uint16_t> {
+class socket_address_ipv6<std::string, uint16_t> {
     public:
     static void init(
-        struct sockaddr_in & addr,
-        const std::string  & addr_str,
-        uint16_t             port)
+        struct sockaddr_in6 & addr,
+        const std::string   & addr_str,
+        uint16_t              port)
     {
         throw std::logic_error(
             "libprocxx::io::socket::address: "
@@ -190,7 +214,7 @@ class socket_address_appletalk {
     static void init(struct sockaddr_at & addr, Args...) {
         throw std::logic_error(
             "libprocxx::io::socket::address: "
-            "AppleTalk socket address: UNIMPLEMENTED YET");
+            "AppleTalk socket address: invalid initialisation");
     }
 };  // end of template class socket_address_appletalk
 
@@ -201,7 +225,7 @@ class socket_address_packet {
     static void init(struct sockaddr_ll & addr, Args...) {
         throw std::logic_error(
             "libprocxx::io::socket::address: "
-            "low-level packet socket address: UNIMPLEMENTED YET");
+            "low-level packet socket address: invalid initialisation");
     }
 };  // end of template class socket_address_packet
 
@@ -212,7 +236,7 @@ class socket_address_x25 {
     static void init(struct sockaddr_x25 & addr, Args...) {
         throw std::logic_error(
             "libprocxx::io::socket::address: "
-            "X25 socket address: UNIMPLEMENTED YET");
+            "X25 socket address: invalid initialisation");
     }
 };  // end of template class socket_address_x25
 
@@ -452,6 +476,29 @@ class socket: public file_descriptor {
                 "failed to create socket");
     }
 
+    /** Move constructor */
+    socket(socket && orig):
+        file_descriptor(std::move(orig)),
+        m_domain(orig.m_domain)
+    {
+        orig.m_domain = domain::NONE;
+    }
+
+    /**
+     *  \brief  Swap sockets
+     *
+     *  \param  arg  The other socket
+     *
+     *  \return \c *this (after swap)
+     */
+    void swap(socket & arg) {
+        static_cast<file_descriptor *>(this)->swap(arg);
+
+        const domain d = m_domain;
+        m_domain = arg.m_domain;
+        arg.m_domain = d;
+    }
+
     domain family() const { return m_domain; }
 
     /**
@@ -517,16 +564,33 @@ class socket: public file_descriptor {
      *  Will only work for sockets of types \ref STREAM or \ref SEQPACKET
      *  on which \ref listen was called first.
      *
-     *  \return Remote party connection socket
+     *  \return Remote party connection socket or closed socket in case
+     *          connection was not accepted but the state is not erroneous
+     *          (e.g. async accepting finished etc).
+     *          The other returned value is \c errno (in case of error).
      */
-    socket accept() {
-        const int fd = ::accept(*this, nullptr, nullptr);
-        if (-1 == fd)
-            throw std::runtime_error(
-                "libprocxx::io::socket::accept: "
-                "failed to accept connection");
+    std::tuple<socket, int> accept() {
+        // TODO: Use _GNU_SOURCE accept4 extension (see man 2 accept) if avail.
+        int err = 0;
 
-        return socket(fd, m_domain);
+        const int fd = ::accept(*this, nullptr, nullptr);
+        if (-1 == fd) {
+            err = errno;
+
+            switch (errno) {
+                // Non-erroneous states (but no socket created)
+                case EAGAIN:
+                case ECONNABORTED:
+                    break;
+
+                default:
+                    throw std::runtime_error(
+                        "libprocxx::io::socket::accept: "
+                        "failed to accept connection");
+            }
+        }
+
+        return std::tuple<socket, int>(socket(fd, m_domain), err);
     }
 
     /**
@@ -536,27 +600,43 @@ class socket: public file_descriptor {
      *  Will only work for sockets of types \ref STREAM or \ref SEQPACKET
      *  on which \ref listen was called first.
      *
-     *  \return Remote party connection socket & address
+     *  \return Remote party connection socket & address or closed socket
+     *          and nvalid address in case connection was not accepted
+     *          but the state is not erroneous
+     *          (e.g. async accepting finished etc).
+     *          The third returned value is \c errno (in case of error).
      */
-    std::tuple<socket, address> accept_addr() {
-        std::tuple<socket, address> sock_addr(
-            socket(), address(m_domain, address::interim_constructor));
+    std::tuple<socket, address, int> accept_addr() {
+        std::tuple<socket, address, int> sock_addr(
+            socket(), address(m_domain, address::interim_constructor), 0);
         auto & sock = std::get<0>(sock_addr);
         auto & addr = std::get<1>(sock_addr);
+        auto & err  = std::get<2>(sock_addr);
+
+        sock.m_domain = m_domain;
 
         socklen_t addr_size = addr.size();
-        const int fd = ::accept(*this, addr.m_sockaddr, &addr_size);
-        if (-1 == fd)
-            throw std::runtime_error(
-                "libprocxx::io::socket::accept: "
-                "failed to accept connection");
+        sock.m_fd = ::accept(*this, addr.m_sockaddr, &addr_size);
+        if (-1 == sock.m_fd) {
+            err = errno;
+
+            switch (err) {
+                // Non-erroneous states (but no socket created)
+                case EAGAIN:
+                case ECONNABORTED:
+                    break;
+
+                default:
+                    throw std::runtime_error(
+                        "libprocxx::io::socket::accept: "
+                        "failed to accept connection");
+            }
+        }
+
         if (addr_size > addr.size())
             throw std::runtime_error(
                 "libprocxx::io::socket::accept: "
                 "failed to set remote address");
-
-        sock.m_fd     = fd;
-        sock.m_domain = m_domain;
 
         return sock_addr;
     }

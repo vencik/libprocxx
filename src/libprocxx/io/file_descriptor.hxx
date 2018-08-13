@@ -95,8 +95,29 @@ class file_descriptor {
     /** Copy constructor */
     file_descriptor(const file_descriptor & orig);
 
+    /** Move constructor */
+    file_descriptor(file_descriptor && orig):
+        m_fd(orig.m_fd)
+    {
+        orig.m_fd = -1;
+    }
+
+    /**
+     *  \brief  Swap file descriptors
+     *
+     *  \param  arg  The other FD
+     */
+    void swap(file_descriptor & arg) {
+        const int fd = m_fd;
+        m_fd = arg.m_fd;
+        arg.m_fd = fd;
+    }
+
     /** Raw file descriptor getter */
     operator int () { return m_fd; }
+
+    /** Raw file descriptor getter (const) */
+    operator int () const { return m_fd; }
 
     /** Raw file descriptor setter */
     file_descriptor & operator = (int fd);

@@ -46,14 +46,18 @@
 #include "libprocxx/io/file_descriptor.hxx"
 #include "libprocxx/mt/utils.hxx"
 
-#include <vector>
+#include <tuple>
+#include <memory>
 #include <list>
 #include <functional>
 #include <cstddef>
 #include <mutex>
 #include <condition_variable>
+#include <cassert>
+#include <stdexcept>
 
 extern "C" {
+#include <unistd.h>
 #include <sys/epoll.h>
 }
 
@@ -73,7 +77,11 @@ namespace io {
  *  The event loop is thread-safe; you may add/modify/remove
  *  file descriptors from different threads than the one that executes
  *  the loop.
+ *
+ *  \tparam  EntryData  Type of data carried by event loop entry
+ *                      (no data by default)
  */
+template <typename EntryData = std::tuple<> >
 class event_loop {
     public:
 
@@ -83,22 +91,37 @@ class event_loop {
         ET  = EPOLLET,      /**< Edge-triggered poll */
     };  // end of enum poll_event
 
+    struct entry;                                /**< File descriptor entry */
+    using entries_t = std::list<entry>;          /**< Entries list type     */
+
+    using entry_handle_t = typename entries_t::iterator;  /**< Entry handle */
+
     /** Event callback */
-    using callback_t = std::function<void(file_descriptor &, int)>;
+    using callback_t = std::function<void(entry_handle_t, int)>;
 
-    /** Event loop file descriptor entry */
+    /**
+     *  \brief  User data stored in the entry
+     *
+     *  Must have default constructor.
+     */
+    using entry_data_t = EntryData;
+
     struct entry {
-        file_descriptor & fd;        /**< File descriptor */
-        callback_t        callback;  /**< Event callback  */
+        entry_handle_t    self;      /**< Iterator to the entry itself */
+        int               events;    /**< Registered I/O events        */
+        int               fd;        /**< File descriptor (raw)        */
+        callback_t        callback;  /**< Event callback               */
+        entry_data_t      data;      /**< User data                    */
 
-        entry(file_descriptor & fd_, callback_t & callback_):
+        template <typename... Args>
+        entry(int events_, int fd_, callback_t & callback_, Args&&... args):
+            events(events_),
             fd(fd_),
-            callback(callback_)
+            callback(callback_),
+            data(std::forward<Args>(args)...)
         {}
 
     };  // end of struct entry
-
-    using entries_t = std::list<entry>;  /**< Entries list type */
 
     private:
 
@@ -108,11 +131,11 @@ class event_loop {
     };  // end of enum loop_signal
 
     /** epoll events */
-    using events_t = std::vector<struct epoll_event>;
+    using events_ptr_t = std::unique_ptr<struct epoll_event[]>;
 
     const size_t    m_max_events;   /**< Max. amount of events per loop */
     const int       m_defaults;     /**< Default events flags           */
-    events_t        m_events;       /**< Event vector                   */
+    events_ptr_t    m_events;       /**< I/O events                     */
     pipe            m_sigpipe;      /**< Signal pipe                    */
     file_descriptor m_epoll_fd;     /**< Linux epoll file descriptor    */
     entries_t       m_entries;      /**< Registered entries             */
@@ -142,7 +165,20 @@ class event_loop {
      *  \param  edge_triggered  Add all file descriptors in edge-triggered mode
      *                          (default behaviour)
      */
-    event_loop(size_t max_events, bool edge_triggered = true);
+    event_loop(size_t max_events, bool edge_triggered = true):
+        m_max_events(max_events),
+        m_defaults(defaults_init(edge_triggered)),
+        m_sigpipe(pipe::flag::NONBLOCK),
+        m_epoll_fd(::epoll_create1(0))
+    {
+        if (m_epoll_fd.closed())
+            throw std::runtime_error(
+                "libprocxx::io::event_loop: "
+                "failed to create epoll");
+
+        m_events = std::make_unique<struct epoll_event[]>(m_max_events);
+        add_fd(m_sigpipe.read_end(), poll_event::IN, nullptr);
+    }
 
     /** Copying is forbidden */
     event_loop(const event_loop & orig) = delete;
@@ -150,17 +186,21 @@ class event_loop {
     /**
      *  \brief  Add socket to the event loop
      *
-     *  \param  sock    Socket
-     *  \param  events  Registered events (see \ref poll_event)
+     *  \param  sock      Socket
+     *  \param  events    Registered events (see \ref poll_event)
+     *  \param  callback  Event callback
+     *  \param  args      Entry data constructor arguments
      *
      *  \return Entry handle
      */
-    entries_t::iterator add_socket(
-        socket &   sock,
-        int        events,
-        callback_t callback)
+    template <typename... Args>
+    entry_handle_t add_socket(
+        const socket &  sock,
+        int             events,
+        callback_t      callback,
+        Args&&...       args)
     {
-        return register_fd(sock, events, callback);
+        return register_fd(sock, events, callback, std::forward<Args>(args)...);
     }
 
     /**
@@ -171,7 +211,7 @@ class event_loop {
      *
      *  \return Entry handle
      */
-    entries_t::iterator add_pipe(
+    entry_handle_t add_pipe(
         pipe &     pipe_,
         int        events,
         callback_t callback)
@@ -181,6 +221,48 @@ class event_loop {
 
         if (poll_event::OUT & events)
             return register_fd(pipe_.write_end(), events, callback);
+    }
+
+    /**
+     *  \brief  Modify I/O events of an entry
+     *
+     *  \param  handle  Entry handle
+     *  \param  events  New events
+     */
+    void modify(entry_handle_t handle, int events) {
+        mod_fd(handle->fd, events, &*handle);
+        handle->events = events;
+    }
+
+    /**
+     *  \brief  Remove entry from event loop
+     *
+     *  \param  handle  Event loop entry handle
+     */
+    void remove(entry_handle_t handle) {
+        del_fd(handle->fd);
+
+        lock4scope(m_mutex);
+        m_entries.erase(handle);
+    }
+
+    /**
+     *  \brief  Move entry from \c this event loop to \c other
+     *
+     *  \param  handle    Entry handle
+     *  \param  other     Target loop
+     */
+    void move(entry_handle_t handle, event_loop & other) {
+        del_fd(handle->fd);
+
+        {
+            lock4scope(m_mutex);
+            lock4scope(other.m_mutex);
+
+            other.m_entries.splice(other.m_entries.end(), m_entries, handle);
+        }
+
+        other.add_fd(handle->fd, handle->events, &*handle);
     }
 
     /**
@@ -218,7 +300,14 @@ class event_loop {
      *  Unlike \ref shutdown, The function will NOT wait for the loop
      *  termination.
      */
-    void shutdown_async();
+    void shutdown_async() {
+        {
+            lock4scope(m_mutex);
+            if (m_sigpipe.write_end().closed()) return;  // already shut down
+        }
+
+        signalise(TERMINATE);
+    }
 
     /**
      *  \brief  Event loop shutdown
@@ -229,35 +318,114 @@ class event_loop {
      *  NOTE: The \ref run_one function doesn't signalise to \c shutdown.
      *  Calling \c shutdown will block indefinitely if \ref run is not running.
      */
-    void shutdown();
+    void shutdown() {
+        auto lock = get_lock4scope(m_mutex);
+
+        if (m_sigpipe.write_end().closed()) return;  // already shut down
+
+        lock.unlock();
+        signalise(TERMINATE);
+        lock.lock();
+
+        while (!m_sigpipe.read_end().closed())
+            m_shutdown.wait(lock);
+
+        m_sigpipe.write_end().close();
+    }
 
     private:
 
     /**
      *  \brief  Register file descriptor
      *
-     *  \param  fd        File descriptor
+     *  \param  fd        File descriptor (raw)
      *  \param  events    Registered events (see \ref poll_event)
      *  \param  callback  Event callback
+     *  \param  args      Entry data constructor arguments
      *
      *  \return Entry handle
      */
-    entries_t::iterator register_fd(
-        file_descriptor & fd,
-        int               events,
-        callback_t        callback);
+    template <typename... Args>
+    entry_handle_t register_fd(
+        int        fd,
+        int        events,
+        callback_t callback,
+        Args&&...  args)
+    {
+        entry_handle_t handle;
+        entry_handle_t entries_end;
+
+        {
+            lock4scope(m_mutex);
+
+            handle = m_entries.emplace(m_entries.end(),
+                events, fd, callback, std::forward<Args>(args)...);
+            entries_end = m_entries.end();
+        }
+
+        if (entries_end != handle) {
+            handle->self = handle;
+            add_fd(fd, events, &*handle);
+        }
+
+        return handle;
+    }
 
     /**
      *  \brief  Poll on file descriptor
      *
-     *  \param  fd        File descriptor
+     *  \param  fd        File descriptor (raw)
      *  \param  events    Registered events (see \ref poll_event)
      *  \param  data_ptr  Custom data pointer
      */
     void add_fd(
-        file_descriptor & fd,
-        int               events,
-        void *            data_ptr);
+        int    fd,
+        int    events,
+        void * data_ptr)
+    {
+        struct epoll_event ev;
+        ev.events   = events | m_defaults;
+        ev.data.ptr = data_ptr;
+
+        if (-1 == ::epoll_ctl(m_epoll_fd, EPOLL_CTL_ADD, fd, &ev))
+            throw std::runtime_error(
+                "libprocxx::io::event_loop: "
+                "failed to add file descriptor");
+    }
+
+    /**
+     *  \brief  Modify file descriptor polling events
+     *
+     *  \param  fd        File descriptor (raw)
+     *  \param  events    Changed events (see \ref poll_event)
+     *  \param  data_ptr  Custom data pointer
+     */
+    void mod_fd(
+        int    fd,
+        int    events,
+        void * data_ptr)
+    {
+        struct epoll_event ev;
+        ev.events   = events | m_defaults;
+        ev.data.ptr = data_ptr;
+
+        if (-1 == ::epoll_ctl(m_epoll_fd, EPOLL_CTL_MOD, fd, &ev))
+            throw std::runtime_error(
+                "libprocxx::io::event_loop: "
+                "failed to modify file descriptor events");
+    }
+
+    /**
+     *  \brief  Don't poll on file descriptor any more
+     *
+     *  \param  fd  File descriptor (raw)
+     */
+    void del_fd(int fd) {
+        if (-1 == ::epoll_ctl(m_epoll_fd, EPOLL_CTL_DEL, fd, nullptr))
+            throw std::runtime_error(
+                "libprocxx::io::event_loop: "
+                "failed to remove file descriptor");
+    }
 
     /**
      *  \brief  Event loop routine
@@ -266,7 +434,44 @@ class event_loop {
      *
      *  \return \c true iff the event loop was shut down
      */
-    bool routine();
+    bool routine() {
+        const int ev_cnt = ::epoll_wait(
+            m_epoll_fd, m_events.get(), m_max_events, -1);
+        if (-1 == ev_cnt)
+            throw std::runtime_error(
+            "libprocxx::io::event_loop: "
+            "epoll_wait failed");
+
+        for (size_t i = 0; i < (size_t)ev_cnt; ++i) {
+            auto & event = m_events[i];
+
+            // Signal pipe message
+            if (nullptr == event.data.ptr) {
+                for (;;) {
+                    unsigned char msg;
+                    auto rcnt_err   = m_sigpipe.read(&msg, 1);
+                    auto & read_cnt = std::get<0>(rcnt_err);
+                    auto & error    = std::get<1>(rcnt_err);
+
+                    if (EAGAIN == error) break;  // done reading for now
+                    assert(1 == read_cnt);
+
+                    switch (msg) {
+                        case INTERRUPT: break;
+                        case TERMINATE: return true;
+                    }
+                }
+
+                continue;  // get on with other events
+            }
+
+            // I/O event
+            const entry & ent = *static_cast<entry *>(event.data.ptr);
+            ent.callback(ent.self, event.events);
+        }
+
+        return false;
+    }
 
     /**
      *  \brief  Signalise on the signal pipe

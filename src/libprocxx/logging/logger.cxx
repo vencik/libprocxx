@@ -42,7 +42,6 @@
 #include <libprocxx/mt/utils.hxx>
 
 #include <cassert>
-#include <iostream>  // TODO: remove
 
 
 namespace libprocxx {
