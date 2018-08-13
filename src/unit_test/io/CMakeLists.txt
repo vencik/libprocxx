@@ -1,21 +1,20 @@
 # libprocxx::io::socket::address UT
-add_executable(unit_test__libprocxx__io__sockaddr sockaddr.cxx)
-target_link_libraries(unit_test__libprocxx__io__sockaddr
-    LINK_PUBLIC libprocxx__io)
-add_test(libprocxx::io::sockaddr unit_test__libprocxx__io__sockaddr)
+add_executable(sockaddr_ut sockaddr.cxx)
+target_link_libraries(sockaddr_ut LINK_PUBLIC libprocxx__io)
+add_test(libprocxx::io::sockaddr sockaddr_ut)
 
 # libprocxx::io::event_loop UT (basic)
-add_executable(unit_test__libprocxx__io__event_loop__basic event_loop.cxx)
-target_link_libraries(unit_test__libprocxx__io__event_loop__basic
+add_executable(event_loop__basic_ut event_loop.cxx)
+target_link_libraries(event_loop__basic_ut
     LINK_PUBLIC libprocxx__io
     LINK_PUBLIC pthread
     LINK_PUBLIC rt)
-add_test(libprocxx::io::event_loop__basic unit_test__libprocxx__io__event_loop__basic)
+add_test(libprocxx::io::event_loop__basic event_loop__basic_ut)
 
 # libprocxx::io::event_loop UT (more advanced)
-add_executable(unit_test__libprocxx__io__event_loop__tcp_server tcp_server.cxx)
-target_link_libraries(unit_test__libprocxx__io__event_loop__tcp_server
+add_executable(event_loop__tcp_server_ut tcp_server.cxx)
+target_link_libraries(event_loop__tcp_server_ut
     LINK_PUBLIC libprocxx__io
     LINK_PUBLIC pthread
     LINK_PUBLIC rt)
-add_test(libprocxx::io::event_loop__tcp_server unit_test__libprocxx__io__event_loop__tcp_server)
+add_test(libprocxx::io::event_loop__tcp_server event_loop__tcp_server_ut)

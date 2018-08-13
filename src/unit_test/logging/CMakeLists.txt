@@ -1,24 +1,23 @@
 # libprocxx::logging UTs
-add_executable(unit_test__libprocxx__logging__plain plain.cxx)
-target_link_libraries(unit_test__libprocxx__logging__plain
+add_executable(logging__plain_ut plain.cxx)
+target_link_libraries(logging__plain_ut
     LINK_PUBLIC libprocxx__logging
     LINK_PUBLIC pthread
     LINK_PUBLIC rt)
-add_test(libprocxx::logging::plain unit_test__libprocxx__logging__plain)
+add_test(libprocxx::logging::plain logging__plain_ut)
 
-add_executable(unit_test__libprocxx__logging__json json.cxx)
-target_link_libraries(unit_test__libprocxx__logging__json
+add_executable(logging__json_ut json.cxx)
+target_link_libraries(logging__json_ut
     LINK_PUBLIC libprocxx__logging
     LINK_PUBLIC pthread
     LINK_PUBLIC rt)
 add_test(
     NAME    libprocxx::logging::json
-    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/json_validate"
-        "./unit_test__libprocxx__logging__json")
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/json_validate" "./logging__json_ut")
 
-add_executable(unit_test__libprocxx__logging__aio aio.cxx)
-target_link_libraries(unit_test__libprocxx__logging__aio
+add_executable(logging__aio_ut aio.cxx)
+target_link_libraries(logging__aio_ut
     LINK_PUBLIC libprocxx__logging
     LINK_PUBLIC pthread
     LINK_PUBLIC rt)
-add_test(libprocxx::logging::aio unit_test__libprocxx__logging__aio)
+add_test(libprocxx::logging::aio logging__aio_ut)

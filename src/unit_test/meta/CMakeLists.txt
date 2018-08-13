@@ -1,3 +1,3 @@
 # libprocxx::container::slots UT
-add_executable(unit_test__libprocxx__meta__scope scope.cxx)
-add_test(libprocxx::meta::scope unit_test__libprocxx__meta__scope)
+add_executable(meta__scope_ut scope.cxx)
+add_test(libprocxx::meta::scope meta__scope_ut)
